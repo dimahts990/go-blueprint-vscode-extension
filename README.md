@@ -129,3 +129,11 @@ npm install
 npm run package          # → go-blueprint-0.1.0.vsix
 code --install-extension go-blueprint-0.1.0.vsix
 ```
+
+## Лицензия
+
+Copyright © 2026 Dmitriy Zhigulskiy
+
+Go Blueprint — свободная программа: её можно распространять и/или изменять на условиях
+GNU General Public License версии 3 или (по вашему выбору) любой более поздней версии,
+опубликованной Free Software Foundation. Полный текст — в файле [LICENSE](LICENSE).

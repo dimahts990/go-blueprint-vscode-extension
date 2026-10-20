@@ -3,8 +3,8 @@
   "displayName": "Go Blueprint",
   "description": "Visualize a Go module as a blueprint-style canvas: types, funcs, methods and the wires between them (calls, implements, embeds, uses).",
   "version": "0.11.1",
-  "publisher": "otzvuk",
-  "license": "MIT",
+  "publisher": "dideploy",
+  "license": "GPL-3.0-or-later",
   "engines": {
     "vscode": "^1.85.0"
   },
