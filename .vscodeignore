@@ -1,0 +1,8 @@
+node_modules/**
+analyzer/gograph*
+**/*.vsix
+.gitignore
+.github/**
+.DS_Store
+**/.DS_Store
+go-blueprint-*/**

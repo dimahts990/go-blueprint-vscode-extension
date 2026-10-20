@@ -1,0 +1,149 @@
+{
+  "name": "go-blueprint",
+  "displayName": "Go Blueprint",
+  "description": "Visualize a Go module as a blueprint-style canvas: types, funcs, methods and the wires between them (calls, implements, embeds, uses).",
+  "version": "0.11.1",
+  "publisher": "otzvuk",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Programming Languages"
+  ],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "goBlueprint.open",
+        "title": "Go Blueprint: Open Full Module Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "goBlueprint.openFile",
+        "title": "Go Blueprint: Show This File as Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "goBlueprint.showSymbol",
+        "title": "Go Blueprint: Show Symbol in Graph"
+      },
+      {
+        "command": "goBlueprint.rebuildAnalyzer",
+        "title": "Go Blueprint: Rebuild Analyzer"
+      },
+      {
+        "command": "goBlueprint.addProtoPath",
+        "title": "Go Blueprint: Add Folder with .proto Files…"
+      },
+      {
+        "command": "goBlueprint.addExtraPackage",
+        "title": "Go Blueprint: Add Generated gRPC Package…"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "goBlueprint.showSymbol",
+          "when": "editorLangId == go",
+          "group": "navigation@90"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "goBlueprint.openFile",
+          "when": "editorLangId == go",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "goBlueprint.openFile",
+          "when": "resourceExtname == .go",
+          "group": "navigation@90"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "goBlueprint.showSymbol",
+        "key": "ctrl+alt+b",
+        "mac": "cmd+alt+b",
+        "when": "editorLangId == go"
+      }
+    ],
+    "configuration": {
+      "title": "Go Blueprint",
+      "properties": {
+        "goBlueprint.goPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the go binary (empty = find on PATH, /usr/local/go/bin, /opt/homebrew/bin)."
+        },
+        "goBlueprint.includeTests": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include _test.go files."
+        },
+        "goBlueprint.includeGenerated": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include generated files (*.pb.go etc.)."
+        },
+        "goBlueprint.refreshOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-analyze the module when a .go file in it is saved."
+        },
+        "goBlueprint.protoPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra folders with .proto files (absolute or relative to the Go module root). Used for positions and source of services, RPCs and messages."
+        },
+        "goBlueprint.extraPackages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Packages with generated gRPC code that live outside the module: an import path pattern (github.com/org/api/gen/...) or a folder. The module must depend on them (go.mod / go.work)."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "goBlueprint",
+          "title": "Go Blueprint",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "goBlueprint": [
+        {
+          "id": "goBlueprint.modules",
+          "name": "Модули",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "goBlueprint.modules",
+        "contents": "Go-модули (go.mod) в рабочей области не найдены.\n[Открыть граф](command:goBlueprint.open)"
+      }
+    ]
+  },
+  "scripts": {
+    "package": "npx @vscode/vsce package --allow-missing-repository"
+  },
+  "dependencies": {
+    "elkjs": "^0.12.0"
+  }
+}

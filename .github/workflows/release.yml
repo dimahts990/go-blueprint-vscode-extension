@@ -1,0 +1,71 @@
+name: Release
+
+# Publishes go-blueprint-<version>.vsix to GitHub Releases.
+#   - push a tag:  git tag v0.11.2 && git push origin v0.11.2
+#     (the tag must match "version" in package.json)
+#   - or run the workflow manually: it tags the commit with v<version from package.json>.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: analyzer/go.mod
+          cache: false
+
+      # The extension compiles the analyzer on the user's machine, so make sure it builds everywhere.
+      - name: Check analyzer
+        working-directory: analyzer
+        run: |
+          go vet -mod=vendor ./...
+          for target in linux/amd64 darwin/arm64 darwin/amd64 windows/amd64; do
+            echo "build $target"
+            GOOS=${target%/*} GOARCH=${target#*/} go build -mod=vendor -o /dev/null .
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Package extension
+        run: npx --yes @vscode/vsce@3 package --allow-missing-repository -o go-blueprint-${{ steps.version.outputs.version }}.vsix
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VSIX: go-blueprint-${{ steps.version.outputs.version }}.vsix
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$VSIX" --clobber
+          else
+            gh release create "$TAG" "$VSIX" --target "$GITHUB_SHA" --title "Go Blueprint $TAG" --generate-notes
+          fi

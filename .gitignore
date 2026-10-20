@@ -1,0 +1,20 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Packaged extension and its unpacked copies
+*.vsix
+go-blueprint-*/
+
+# Analyzer binaries
+analyzer/gograph
+analyzer/gograph-*
+analyzer/*.exe
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
