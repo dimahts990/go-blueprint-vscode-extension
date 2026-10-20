@@ -5,6 +5,14 @@
   "version": "0.11.1",
   "publisher": "dideploy",
   "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dimahts990/go-blueprint-vscode-extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dimahts990/go-blueprint-vscode-extension/issues"
+  },
+  "homepage": "https://github.com/dimahts990/go-blueprint-vscode-extension#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -141,7 +149,7 @@
     ]
   },
   "scripts": {
-    "package": "npx @vscode/vsce package --allow-missing-repository"
+    "package": "npx @vscode/vsce package"
   },
   "dependencies": {
     "elkjs": "^0.12.0"

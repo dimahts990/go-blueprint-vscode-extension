@@ -56,7 +56,7 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Package extension
-        run: npx --yes @vscode/vsce@3 package --allow-missing-repository -o go-blueprint-${{ steps.version.outputs.version }}.vsix
+        run: npx --yes @vscode/vsce@3 package -o go-blueprint-${{ steps.version.outputs.version }}.vsix
 
       - name: Publish release
         env:
