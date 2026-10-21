@@ -36,21 +36,31 @@ type Field struct {
 }
 
 type Node struct {
-	ID         string  `json:"id"`
-	Kind       string  `json:"kind"` // struct | interface | type | func | method | imethod | service | rpc | message
-	Name       string  `json:"name"`
-	Pkg        string  `json:"pkg"`
-	Parent     string  `json:"parent,omitempty"`
-	Sig        string  `json:"sig,omitempty"`
-	Underlying string  `json:"underlying,omitempty"`
-	File       string  `json:"file"`
-	Line       int     `json:"line"`
-	EndLine    int     `json:"endLine"`
-	Exported   bool    `json:"exported"`
-	PtrRecv    bool    `json:"ptrRecv,omitempty"`
-	Doc        string  `json:"doc,omitempty"`
-	Fields     []Field `json:"fields,omitempty"`
-	Stream     string  `json:"stream,omitempty"` // rpc: unary | server | client | bidi
+	ID         string   `json:"id"`
+	Kind       string   `json:"kind"` // struct | interface | type | func | method | imethod | service | rpc | message
+	Name       string   `json:"name"`
+	Pkg        string   `json:"pkg"`
+	Parent     string   `json:"parent,omitempty"`
+	Sig        string   `json:"sig,omitempty"`
+	Underlying string   `json:"underlying,omitempty"`
+	File       string   `json:"file"`
+	Line       int      `json:"line"`
+	EndLine    int      `json:"endLine"`
+	Exported   bool     `json:"exported"`
+	PtrRecv    bool     `json:"ptrRecv,omitempty"`
+	Doc        string   `json:"doc,omitempty"`
+	Fields     []Field  `json:"fields,omitempty"`
+	Stream     string   `json:"stream,omitempty"`  // rpc: unary | server | client | bidi
+	Returns    []Result `json:"returns,omitempty"` // func | method: result values
+}
+
+// Result is one return value of a function, with the shape of its type.
+type Result struct {
+	Name   string  `json:"name,omitempty"`
+	Type   string  `json:"type"`
+	Ref    string  `json:"ref,omitempty"`  // node id of the named type, when it is in the graph
+	Kind   string  `json:"kind,omitempty"` // struct | interface — what Fields lists
+	Fields []Field `json:"fields,omitempty"`
 }
 
 type Edge struct {
@@ -244,6 +254,9 @@ func main() {
 		b.typeRelations(p)
 	}
 	b.implements()
+	for _, p := range list {
+		b.results(p)
+	}
 	// Pass 3: calls and function references.
 	for _, p := range list {
 		b.calls(p)
@@ -671,6 +684,96 @@ func (b *builder) typeRelations(p *packages.Package) {
 					}, map[types.Type]bool{})
 				}
 			}
+		}
+	}
+}
+
+// maxResultFields caps the members listed for one return type.
+const maxResultFields = 40
+
+// results describes the return values of every function and method: the type
+// and, for structs and interfaces, their fields / methods.
+func (b *builder) results(p *packages.Package) {
+	q := qualifier(p.Types)
+	for _, f := range b.files(p) {
+		for _, decl := range f.Decls {
+			d, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			fn, _ := p.TypesInfo.Defs[d.Name].(*types.Func)
+			n := b.nodes[b.funcIDs[fn]]
+			if n == nil {
+				continue
+			}
+			res := fn.Type().(*types.Signature).Results()
+			for i := 0; i < res.Len(); i++ {
+				v := res.At(i)
+				r := Result{Name: v.Name(), Type: types.TypeString(v.Type(), q)}
+				b.describeResult(&r, v.Type(), q)
+				n.Returns = append(n.Returns, r)
+			}
+		}
+	}
+}
+
+// describeResult finds the named type behind t (through pointers, slices,
+// arrays, maps and chans) and lists its struct fields or interface methods.
+func (b *builder) describeResult(r *Result, t types.Type, q types.Qualifier) {
+	for {
+		switch x := types.Unalias(t).(type) {
+		case *types.Pointer:
+			t = x.Elem()
+			continue
+		case *types.Slice:
+			t = x.Elem()
+			continue
+		case *types.Array:
+			t = x.Elem()
+			continue
+		case *types.Map:
+			t = x.Elem()
+			continue
+		case *types.Chan:
+			t = x.Elem()
+			continue
+		}
+		break
+	}
+	t = types.Unalias(t)
+	named, _ := t.(*types.Named)
+	if named != nil {
+		obj := named.Origin().Obj()
+		if obj.Pkg() == nil { // error, comparable
+			return
+		}
+		r.Ref = b.typeIDs[obj]
+	}
+	// outside the module only the exported API is of interest
+	local := named == nil || r.Ref != ""
+	switch u := t.Underlying().(type) {
+	case *types.Struct:
+		r.Kind = "struct"
+		for i := 0; i < u.NumFields() && len(r.Fields) < maxResultFields; i++ {
+			fv := u.Field(i)
+			if !local && !fv.Exported() {
+				continue
+			}
+			r.Fields = append(r.Fields, Field{
+				Name: fv.Name(), Type: types.TypeString(fv.Type(), q),
+				Embedded: fv.Embedded(), Exported: fv.Exported(),
+			})
+		}
+	case *types.Interface:
+		r.Kind = "interface"
+		for i := 0; i < u.NumMethods() && len(r.Fields) < maxResultFields; i++ {
+			m := u.Method(i)
+			if !local && !m.Exported() {
+				continue
+			}
+			r.Fields = append(r.Fields, Field{
+				Name: m.Name(), Type: sigString(m.Type().(*types.Signature), q), Exported: m.Exported(),
+			})
 		}
 	}
 }

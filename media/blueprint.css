@@ -357,3 +357,12 @@ select { padding: 2px 4px; }
 .card .row.xrow .sg { color: #9fb6d6; font-style: italic; }
 .card .fbtn.wide { width: auto; height: 18px; padding: 0 8px; margin-left: auto; font-size: 11px; }
 #wires .w.member { stroke: var(--w-member, #8a8a8a); stroke-dasharray: 3 4; opacity: .75; }
+
+/* ---------------------------------------------------------------- return types of a func, shown on demand */
+.fbtn.on { background: var(--accent); color: #000; }
+.card .row.ret .nm { color: #f0a46a; }
+.card .row.ret .lb { font-size: 10px; color: #8d8d8d; }
+.card .row.rf { padding-left: 30px; }
+.card .mr.un { border-color: #4a4a4a; border-style: solid; color: #9a9a9a; }
+.card .mr.un b { color: #9fb6d6; }
+.card .mr.un:hover { background: #20262f; border-color: #4ea4ff; color: #fff; }

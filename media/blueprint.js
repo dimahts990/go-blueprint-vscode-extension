@@ -46,8 +46,10 @@
     hiddenPkgs: [],
     collapsedPkgs: [], // package layers shown as one miniature card
     exploded: [],      // types whose methods are shown as separate cards
+    retOpen: [],       // funcs / methods whose return types are expanded
     hiddenCards: [],
     extra: [],         // cards revealed on top of the filters / focus
+    revealedBy: {},    // card id -> { rel key -> ids it revealed } (for collapsing them back)
     open: [],          // endpoints with an open info dropdown
     showFields: true,
     showPrivate: true,
@@ -389,8 +391,10 @@
     if (S.focus && !focusValid(S.focus.id)) S.focus = null;
     S.history = S.history.filter(focusValid);
     S.extra = S.extra.filter((id) => byId.has(id));
+    pruneRevealed();
     S.open = S.open.filter((id) => byId.has(id));
     S.exploded = S.exploded.filter((id) => byId.has(id));
+    S.retOpen = (S.retOpen || []).filter((id) => byId.has(id));
     explodedSet = new Set(S.exploded);
   }
 
@@ -432,6 +436,7 @@
   }
 
   function computeVisible() {
+    pruneRevealed();
     const hiddenP = new Set(S.hiddenPkgs);
     const enabled = G.edges.filter((e) => S.edgeKinds[e.kind]);
     let ids;
@@ -573,17 +578,29 @@
 
   function moreHTML(c) {
     const rel = visible.hiddenRel.get(c.id);
-    if (!rel || !rel.size) return '';
+    const rev = S.revealedBy[c.id];
+    if ((!rel || !rel.size) && !rev) return '';
     let h = '';
     const all = new Set();
     for (const r of RELS) {
-      const set = rel.get(r.key);
+      const set = rel && rel.get(r.key);
       if (!set) continue;
       for (const id of set) all.add(id);
       const names = [...set].slice(0, 12).map(displayName).join(', ') + (set.size > 12 ? ', …' : '');
       h += `<span class="mr" data-card="${esc(c.id)}" data-rel="${r.key}" title="Show: ${esc(names)}">${r.label} <b>${set.size}</b></span>`;
     }
-    if (rel.size > 1) h += `<span class="mr all" data-card="${esc(c.id)}" data-rel="*" title="Show all related">all <b>+${all.size}</b></span>`;
+    if (rel && rel.size > 1) h += `<span class="mr all" data-card="${esc(c.id)}" data-rel="*" title="Show all related">all <b>+${all.size}</b></span>`;
+    // the reverse: cards this one revealed can be collapsed back
+    if (rev) {
+      const keys = RELS.filter((r) => rev[r.key]);
+      const shown = new Set();
+      for (const r of keys) {
+        for (const id of rev[r.key]) shown.add(id);
+        const names = rev[r.key].slice(0, 12).map(displayName).join(', ') + (rev[r.key].length > 12 ? ', …' : '');
+        h += `<span class="mr un" data-card="${esc(c.id)}" data-unrel="${r.key}" title="Свернуть: ${esc(names)}">− ${r.label} <b>${rev[r.key].length}</b></span>`;
+      }
+      if (keys.length > 1) h += `<span class="mr un all" data-card="${esc(c.id)}" data-unrel="*" title="Свернуть всё, что раскрыто из этого блока">свернуть всё <b>−${shown.size}</b></span>`;
+    }
     return `<div class="more">${h}</div>`;
   }
 
@@ -675,13 +692,41 @@
     return rebuild({ relayout: true, anchor: id });
   }
 
+  // Return values of a func / method card: hidden until the header button is pressed.
+  function retBtn(c) {
+    if (S.compact || !c.returns || !c.returns.length) return '';
+    return S.retOpen.includes(c.id)
+      ? `<span class="fbtn on" data-rets="${esc(c.id)}" title="Скрыть структуру возвращаемого типа">⇡</span>`
+      : `<span class="fbtn" data-rets="${esc(c.id)}" title="Показать структуру возвращаемого типа">⇣</span>`;
+  }
+
+  function retHTML(c) {
+    if (S.compact || !c.returns || !S.retOpen.includes(c.id)) return '';
+    let h = '<div class="sep"></div>';
+    for (const r of c.returns) {
+      const tag = r.kind ? `<span class="lb">${r.kind}</span>` : '';
+      h += `<div class="row ret"><span class="nm">↳ ${esc(r.name || 'return')}</span>${tag}<span class="ty">${esc(r.type)}</span></div>`;
+      for (const f of (r.fields || []).filter((f) => S.showPrivate || f.exported)) {
+        h += r.kind === 'interface'
+          ? `<div class="row rf${f.exported ? '' : ' priv'}"><span class="nm">${esc(f.name)}</span><span class="sg">${esc(f.type)}</span></div>`
+          : `<div class="row rf${f.exported ? '' : ' priv'}"><span class="nm">${f.embedded ? '' : esc(f.name)}</span><span class="ty${f.embedded ? ' emb' : ''}">${esc(f.type)}</span></div>`;
+      }
+    }
+    return h;
+  }
+
+  function toggleReturns(id) {
+    S.retOpen = S.retOpen.includes(id) ? S.retOpen.filter((x) => x !== id) : [...S.retOpen, id];
+    return rebuild({ anchor: id });
+  }
+
   function methodCardHTML(m) {
     const T = byId.get(m.parent);
     const icon = m.kind === 'rpc' ? 'R' : 'M';
     return `<div class="card k-mcard of-${T.kind}" data-card="${esc(m.id)}">
       <div class="hdr" data-ep="${esc(m.id)}"><span class="pin l ex" data-side="in"></span><span class="ic">${icon}</span><span class="t"><span class="own">${esc(T.name)}.</span>${m.ptrRecv ? '<span class="ptr">*</span>' : ''}${esc(m.name)}</span>
-        <span class="fbtn" data-implode="${esc(T.id)}" title="Свернуть методы обратно в ${esc(T.name)}">⇱</span><span class="xp" data-xp="${esc(m.id)}" title="Code info">ⓘ</span><span class="pin r ex" data-side="out"></span></div>
-      <div class="body">${S.compact ? '' : `<div class="row sig"><span class="sg">${esc(m.sig)}</span></div>`}<div class="row mof"><span class="tag">${m.kind === 'imethod' ? 'метод интерфейса' : 'метод'} ${esc(T.name)}</span></div></div>${moreHTML(m)}</div>`;
+        ${retBtn(m)}<span class="fbtn" data-implode="${esc(T.id)}" title="Свернуть методы обратно в ${esc(T.name)}">⇱</span><span class="xp" data-xp="${esc(m.id)}" title="Code info">ⓘ</span><span class="pin r ex" data-side="out"></span></div>
+      <div class="body">${S.compact ? '' : `<div class="row sig"><span class="sg">${esc(m.sig)}</span></div>`}<div class="row mof"><span class="tag">${m.kind === 'imethod' ? 'метод интерфейса' : 'метод'} ${esc(T.name)}</span></div>${retHTML(m)}</div>${moreHTML(m)}</div>`;
   }
 
   function cardHTML(c) {
@@ -690,7 +735,7 @@
     const pk = !S.groupByPkg || S.focus ? `<span class="pk">${esc(shortPkg(c.pkg))}</span>` : '';
     const pinKind = c.kind === 'func' ? 'ex' : '';
     let h = `<div class="card k-${c.kind}" data-card="${esc(c.id)}">
-      <div class="hdr" data-ep="${esc(c.id)}"><span class="pin l ${pinKind}" data-side="in"></span><span class="ic">${KIND_ICON[c.kind]}</span><span class="t">${esc(c.name)}</span>${pk}${explodeBtn(c)}<span class="xp" data-xp="${esc(c.id)}" title="Code info">ⓘ</span><span class="pin r ${pinKind}" data-side="out"></span></div>`;
+      <div class="hdr" data-ep="${esc(c.id)}"><span class="pin l ${pinKind}" data-side="in"></span><span class="ic">${KIND_ICON[c.kind]}</span><span class="t">${esc(c.name)}</span>${pk}${explodeBtn(c)}${retBtn(c)}<span class="xp" data-xp="${esc(c.id)}" title="Code info">ⓘ</span><span class="pin r ${pinKind}" data-side="out"></span></div>`;
     if (S.compact) return h + moreHTML(c) + '</div>';
 
     let body = '';
@@ -710,7 +755,7 @@
       }
       return h + `<div class="body">${body}</div>` + moreHTML(c) + '</div>';
     }
-    if (c.kind === 'func') body += `<div class="row sig"><span class="sg">${esc(c.sig)}</span></div>`;
+    if (c.kind === 'func') body += `<div class="row sig"><span class="sg">${esc(c.sig)}</span></div>` + retHTML(c);
     if (c.kind === 'type' && c.underlying) body += `<div class="row sig"><span class="sg">${esc(c.underlying)}</span></div>`;
     const fields = S.showFields && c.fields ? c.fields.filter((f) => S.showPrivate || f.exported) : [];
     for (const f of fields) {
@@ -986,8 +1031,61 @@
     const rel = visible.hiddenRel.get(cardId);
     if (!rel) return;
     const ids = new Set();
-    for (const [k, set] of rel) if (key === '*' || k === key) for (const id of set) ids.add(id);
+    const rev = S.revealedBy[cardId] || {};
+    for (const [k, set] of rel) {
+      if (key !== '*' && k !== key) continue;
+      const add = [...set].filter((id) => !visible.vis.has(id));
+      if (add.length) rev[k] = [...new Set([...(rev[k] || []), ...add])];
+      for (const id of set) ids.add(id);
+    }
+    if (Object.keys(rev).length) S.revealedBy = { ...S.revealedBy, [cardId]: rev };
     return revealIds(ids, cardId);
+  }
+
+  // Collapses what a card revealed through its chips, together with whatever
+  // those cards revealed in turn. Cards also revealed from elsewhere stay.
+  function collapseRel(cardId, key) {
+    const rev = S.revealedBy[cardId];
+    if (!rev) return;
+    const by = { ...S.revealedBy };
+    const drop = new Set();
+    const queue = [];
+    const rest = {};
+    for (const [k, ids] of Object.entries(rev)) {
+      if (key === '*' || k === key) queue.push(...ids);
+      else rest[k] = ids;
+    }
+    if (Object.keys(rest).length) by[cardId] = rest; else delete by[cardId];
+    while (queue.length) {
+      const id = queue.pop();
+      if (drop.has(id) || id === cardId) continue;
+      drop.add(id);
+      for (const ids of Object.values(by[id] || {})) queue.push(...ids);
+      delete by[id];
+    }
+    const kept = new Set();
+    for (const r of Object.values(by)) for (const ids of Object.values(r)) for (const id of ids) kept.add(id);
+    S.extra = S.extra.filter((id) => !drop.has(id) || kept.has(id));
+    S.revealedBy = by;
+    pruneRevealed();
+    if (selection && drop.has(selection.card) && !S.extra.includes(selection.card)) selection = null;
+    return rebuild({ anchor: cardId });
+  }
+
+  // Forget reveal records for cards that are no longer revealed (reset, hidden, …).
+  function pruneRevealed() {
+    const extra = new Set(S.extra);
+    const out = {};
+    for (const [card, rev] of Object.entries(S.revealedBy || {})) {
+      if (!byId.has(card)) continue;
+      const r = {};
+      for (const [k, ids] of Object.entries(rev)) {
+        const left = ids.filter((id) => extra.has(id));
+        if (left.length) r[k] = left;
+      }
+      if (Object.keys(r).length) out[card] = r;
+    }
+    S.revealedBy = out;
   }
 
   async function goTo(id, fromEp) {
@@ -2260,6 +2358,7 @@
       const d = t.fbtn.dataset;
       if (d.explode) explodeType(d.explode);
       else if (d.implode) implodeType(d.implode);
+      else if (d.rets) toggleReturns(d.rets);
       else if (d.fcollapse) collapseLayer(d.fcollapse);
       else if (d.lexpand) expandLayer(d.lexpand);
       else if (d.fhide) hideLayer(d.fhide);
@@ -2277,7 +2376,12 @@
       return;
     }
     if (t.xp) { if (ev.button === 0) toggleInfo(t.xp); return; }
-    if (t.more) { if (ev.button === 0) revealRel(t.more.dataset.card, t.more.dataset.rel); return; }
+    if (t.more) {
+      if (ev.button !== 0) return;
+      const d = t.more.dataset;
+      if (d.unrel) collapseRel(d.card, d.unrel); else revealRel(d.card, d.rel);
+      return;
+    }
     const start = { x: ev.clientX, y: ev.clientY };
     if (ev.button === 1 || (ev.button === 0 && !t.card && !t.pkg)) {
       drag = { mode: 'pan', start, view: { ...view }, moved: false };
@@ -2477,6 +2581,9 @@
         items.push(explodedSet.has(cc.id)
           ? ['Свернуть методы обратно', () => implodeType(cc.id)]
           : ['Вынести методы в отдельные блоки', () => explodeType(cc.id)]);
+      }
+      if (cc.returns && cc.returns.length && !S.compact) {
+        items.push([S.retOpen.includes(cc.id) ? 'Скрыть возвращаемый тип' : 'Показать возвращаемый тип', () => toggleReturns(cc.id)]);
       }
       items.push(['Hide node', () => {
         S.hiddenCards.push(cardId);
