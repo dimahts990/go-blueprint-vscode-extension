@@ -46,6 +46,7 @@
     hiddenPkgs: [],
     collapsedPkgs: [], // package layers shown as one miniature card
     exploded: [],      // types whose methods are shown as separate cards
+    explodedOne: [],   // single methods pulled out of their type
     retOpen: [],       // funcs / methods whose return types are expanded
     hiddenCards: [],
     extra: [],         // cards revealed on top of the filters / focus
@@ -396,6 +397,8 @@
     S.exploded = S.exploded.filter((id) => byId.has(id));
     S.retOpen = (S.retOpen || []).filter((id) => byId.has(id));
     explodedSet = new Set(S.exploded);
+    S.explodedOne = (S.explodedOne || []).filter((id) => byId.has(id));
+    explodedOne = new Set(S.explodedOne);
   }
 
   // A focus target is a node id, or "file:<path>" for the code of one file.
@@ -408,12 +411,13 @@
   // The card that renders an endpoint: methods live in their receiver's card,
   // "Type#field" endpoints live in the type's card.
   let explodedSet = new Set(S.exploded);
+  let explodedOne = new Set(S.explodedOne || []);
   function ownerOf(id) {
     const n = byId.get(id);
     if (n) {
       if (!n.parent) return id;
       if (!byId.has(n.parent)) return null;
-      return explodedSet.has(n.parent) ? id : n.parent;
+      return explodedSet.has(n.parent) || explodedOne.has(id) ? id : n.parent;
     }
     const i = id.lastIndexOf('#');
     if (i > 0 && byId.has(id.slice(0, i))) return id.slice(0, i);
@@ -501,6 +505,15 @@
         memberEdges.push({ from: T, to: m.id, kind: 'member', count: 1 });
       }
     }
+    // ...and a single pulled-out method comes with its type
+    for (const id of explodedOne) {
+      const m = byId.get(id);
+      if (!m || explodedSet.has(m.parent) || !memberVisible(m)) continue;
+      if (!ids.has(m.parent) && !ids.has(id)) continue;
+      ids.add(m.parent);
+      ids.add(id);
+      memberEdges.push({ from: m.parent, to: id, kind: 'member', count: 1 });
+    }
 
     // collapsed layers: the package's cards are replaced by one miniature card
     const collapsed = new Set(S.collapsedPkgs);
@@ -510,7 +523,7 @@
     const candidates = [];
     for (const c of cardsAll) {
       candidates.push(c);
-      if (explodedSet.has(c.id)) for (const m of membersOf.get(c.id) || []) candidates.push(m);
+      for (const m of membersOf.get(c.id) || []) if (explodedSet.has(c.id) || explodedOne.has(m.id)) candidates.push(m);
     }
     for (const c of candidates) {
       if (!ids.has(c.id)) continue;
@@ -680,6 +693,9 @@
     if (explodedSet.has(id)) return;
     S.exploded = [...S.exploded, id];
     explodedSet = new Set(S.exploded);
+    // the whole type is out now: single pull-outs of it are no longer needed
+    S.explodedOne = S.explodedOne.filter((m) => byId.get(m).parent !== id);
+    explodedOne = new Set(S.explodedOne);
     selection = null;
     return rebuild({ relayout: true, anchor: id });
   }
@@ -727,12 +743,30 @@
     return rebuild({ anchor: id });
   }
 
+  function explodeMember(id) {
+    if (explodedOne.has(id)) return;
+    S.explodedOne = [...S.explodedOne, id];
+    explodedOne = new Set(S.explodedOne);
+    selection = null;
+    return rebuild({ relayout: true, anchor: byId.get(id).parent });
+  }
+
+  function implodeMember(id) {
+    if (!explodedOne.has(id)) return;
+    S.explodedOne = S.explodedOne.filter((x) => x !== id);
+    explodedOne = new Set(S.explodedOne);
+    selection = null;
+    return rebuild({ relayout: true, anchor: byId.get(id).parent });
+  }
+
   function methodCardHTML(m) {
     const T = byId.get(m.parent);
     const icon = m.kind === 'rpc' ? 'R' : 'M';
     return `<div class="card k-mcard of-${T.kind}" data-card="${esc(m.id)}">
       <div class="hdr" data-ep="${esc(m.id)}"><span class="pin l ex" data-side="in"></span><span class="ic">${icon}</span><span class="t"><span class="own">${esc(T.name)}.</span>${m.ptrRecv ? '<span class="ptr">*</span>' : ''}${esc(m.name)}</span>
-        ${retBtn(m)}<span class="fbtn" data-implode="${esc(T.id)}" title="Свернуть методы обратно в ${esc(T.name)}">⇱</span><span class="xp" data-xp="${esc(m.id)}" title="Code info">ⓘ</span><span class="pin r ex" data-side="out"></span></div>
+        ${retBtn(m)}${explodedSet.has(T.id)
+          ? `<span class="fbtn" data-implode="${esc(T.id)}" title="Свернуть методы обратно в ${esc(T.name)}">⇱</span>`
+          : `<span class="fbtn" data-implode1="${esc(m.id)}" title="Вернуть метод в ${esc(T.name)}">⇱</span>`}<span class="xp" data-xp="${esc(m.id)}" title="Code info">ⓘ</span><span class="pin r ex" data-side="out"></span></div>
       <div class="body">${S.compact ? '' : `<div class="row sig"><span class="sg">${esc(m.sig)}</span></div>`}<div class="row mof"><span class="tag">${m.kind === 'imethod' ? 'метод интерфейса' : 'метод'} ${esc(T.name)}</span></div>${retHTML(m)}</div>${moreHTML(m)}</div>`;
   }
 
@@ -779,9 +813,14 @@
       body += `<div class="row xrow"><span class="sg">↳ ${members.length} метод${plural(members.length)} вынесен${members.length === 1 ? '' : 'ы'} в блоки</span><span class="fbtn wide" data-implode="${esc(c.id)}" title="Свернуть методы обратно в ${esc(c.name)}">⇱ свернуть</span></div>`;
     } else if (members.length) {
       if (fields.length) body += '<div class="sep"></div>';
+      const one = EXPLODABLE.has(c.kind);
       for (const m of members) {
+        if (explodedOne.has(m.id)) {
+          body += `<div class="row method out${m.exported ? '' : ' priv'}"><span class="nm">${m.ptrRecv ? '<span class="ptr">*</span>' : ''}${esc(m.name)}</span><span class="sg">↳ вынесен в блок</span><span class="fbtn row-x" data-implode1="${esc(m.id)}" title="Вернуть метод в ${esc(c.name)}">⇱</span></div>`;
+          continue;
+        }
         body += `<div class="row method${m.exported ? '' : ' priv'}" data-ep="${esc(m.id)}">
-          <span class="pin l ex" data-side="in"></span><span class="nm">${m.ptrRecv ? '<span class="ptr">*</span>' : ''}${esc(m.name)}</span><span class="sg">${esc(m.sig)}</span><span class="xp" data-xp="${esc(m.id)}" title="Code info">ⓘ</span><span class="pin r ex" data-side="out"></span></div>`;
+          <span class="pin l ex" data-side="in"></span><span class="nm">${m.ptrRecv ? '<span class="ptr">*</span>' : ''}${esc(m.name)}</span><span class="sg">${esc(m.sig)}</span>${one ? `<span class="fbtn row-x" data-explode1="${esc(m.id)}" title="Вынести ${esc(m.name)} в отдельный блок">⇲</span>` : ''}<span class="xp" data-xp="${esc(m.id)}" title="Code info">ⓘ</span><span class="pin r ex" data-side="out"></span></div>`;
       }
     }
     if (body) h += `<div class="body">${body}</div>`;
@@ -2368,6 +2407,8 @@
       const d = t.fbtn.dataset;
       if (d.explode) explodeType(d.explode);
       else if (d.implode) implodeType(d.implode);
+      else if (d.explode1) explodeMember(d.explode1);
+      else if (d.implode1) implodeMember(d.implode1);
       else if (d.rets) toggleReturns(d.rets);
       else if (d.fcollapse) collapseLayer(d.fcollapse);
       else if (d.lexpand) expandLayer(d.lexpand);
@@ -2586,7 +2627,12 @@
       items.push([S.open.includes(target) ? 'Hide code info' : 'Code info', () => toggleInfo(target)]);
       items.push(['Open source', () => { const n = byId.get(target); openSource(n.file, n.line); }]);
       const cc = byId.get(cardId);
+      const tn = byId.get(target);
+      if (tn && tn.parent === cc.id && EXPLODABLE.has(cc.kind) && !explodedSet.has(cc.id)) {
+        items.push([`Вынести ${tn.name} в отдельный блок`, () => explodeMember(tn.id)]);
+      }
       if (cc.parent && explodedSet.has(cc.parent)) items.push([`Свернуть методы обратно в ${byId.get(cc.parent).name}`, () => implodeType(cc.parent)]);
+      else if (cc.parent && explodedOne.has(cc.id)) items.push([`Вернуть метод в ${byId.get(cc.parent).name}`, () => implodeMember(cc.id)]);
       else if (EXPLODABLE.has(cc.kind) && (membersOf.get(cc.id) || []).some(memberVisible)) {
         items.push(explodedSet.has(cc.id)
           ? ['Свернуть методы обратно', () => implodeType(cc.id)]
@@ -2706,7 +2752,10 @@
     else if (ev.key === 'l' || ev.key === 'L' || ev.key === 'д' || ev.key === 'Д') $('#t-lenya').click();
     else if ((ev.key === 'e' || ev.key === 'E' || ev.key === 'у' || ev.key === 'У') && selection) {
       const c = byId.get(selection.card);
+      const ep = selection.ep && byId.get(selection.ep);
       if (c && c.parent && explodedSet.has(c.parent)) implodeType(c.parent);
+      else if (c && c.parent && explodedOne.has(c.id)) implodeMember(c.id);
+      else if (c && ep && ep.parent === c.id && EXPLODABLE.has(c.kind) && !explodedSet.has(c.id)) explodeMember(ep.id);
       else if (c && EXPLODABLE.has(c.kind)) (explodedSet.has(c.id) ? implodeType : explodeType)(c.id);
     }
     else if (ev.key === 'i' && selection) toggleInfo(selection.ep || selection.card);

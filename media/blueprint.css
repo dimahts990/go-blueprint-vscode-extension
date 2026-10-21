@@ -368,3 +368,11 @@ select { padding: 2px 4px; }
 .card .mr.un { border-color: #4a4a4a; border-style: solid; color: #9a9a9a; }
 .card .mr.un b { color: #9fb6d6; }
 .card .mr.un:hover { background: #20262f; border-color: #4ea4ff; color: #fff; }
+
+/* ---------------------------------------------------------------- a single method pulled out of its type */
+.card .row .fbtn.row-x { width: 15px; height: 15px; margin-left: 4px; font-size: 10px; background: #333; color: #ccc; opacity: 0; flex: none; }
+.card .row:hover .fbtn.row-x, .card .row.sel .fbtn.row-x, .card .row.out .fbtn.row-x { opacity: 1; }
+.card .row .fbtn.row-x:hover { background: var(--accent); color: #000; }
+.card .row.method.out { padding-left: 16px; }
+.card .row.method.out .nm { color: #7d7d7d; }
+.card .row.method.out .sg { color: #9fb6d6; font-style: italic; }
