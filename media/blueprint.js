@@ -707,12 +707,19 @@
       const tag = r.kind ? `<span class="lb">${r.kind}</span>` : '';
       h += `<div class="row ret"><span class="nm">↳ ${esc(r.name || 'return')}</span>${tag}<span class="ty">${esc(r.type)}</span></div>`;
       for (const f of (r.fields || []).filter((f) => S.showPrivate || f.exported)) {
+        if (r.kind === 'enum') { h += enumRow(f, 'rf'); continue; }
         h += r.kind === 'interface'
           ? `<div class="row rf${f.exported ? '' : ' priv'}"><span class="nm">${esc(f.name)}</span><span class="sg">${esc(f.type)}</span></div>`
           : `<div class="row rf${f.exported ? '' : ' priv'}"><span class="nm">${f.embedded ? '' : esc(f.name)}</span><span class="ty${f.embedded ? ' emb' : ''}">${esc(f.type)}</span></div>`;
       }
     }
     return h;
+  }
+
+  // One constant of an "enum" type: name = value // comment.
+  function enumRow(f, cls) {
+    return `<div class="row ${cls}${f.exported ? '' : ' priv'}"><span class="nm">${esc(f.name)}</span><span class="sg">= ${esc(f.type)}</span>` +
+      (f.doc ? `<span class="cm" title="${esc(f.doc)}">// ${esc(f.doc.split('\n')[0])}</span>` : '') + '</div>';
   }
 
   function toggleReturns(id) {
@@ -757,6 +764,9 @@
     }
     if (c.kind === 'func') body += `<div class="row sig"><span class="sg">${esc(c.sig)}</span></div>` + retHTML(c);
     if (c.kind === 'type' && c.underlying) body += `<div class="row sig"><span class="sg">${esc(c.underlying)}</span></div>`;
+    if (c.kind === 'type' && S.showFields && c.values) {
+      for (const f of c.values.filter((f) => S.showPrivate || f.exported)) body += enumRow(f, 'ev');
+    }
     const fields = S.showFields && c.fields ? c.fields.filter((f) => S.showPrivate || f.exported) : [];
     for (const f of fields) {
       const ep = c.id + '#' + f.name;

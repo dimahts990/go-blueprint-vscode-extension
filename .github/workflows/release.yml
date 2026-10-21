@@ -1,11 +1,14 @@
 name: Release
 
 # Publishes go-blueprint-<version>.vsix to GitHub Releases.
+#   - push to main: releases v<version from package.json> if that release does not exist yet
+#     (bump "version" to publish; otherwise the build is only checked)
 #   - push a tag:  git tag v0.11.2 && git push origin v0.11.2
 #     (the tag must match "version" in package.json)
 #   - or run the workflow manually: it tags the commit with v<version from package.json>.
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -13,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -54,11 +57,20 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          # a push to main publishes only a new version
+          PUBLISH=true
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "branch" ] &&
+             git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::notice::v$VERSION is already released — bump \"version\" in package.json to publish a new release"
+            PUBLISH=false
+          fi
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
 
       - name: Package extension
         run: npx --yes @vscode/vsce@3 package -o go-blueprint-${{ steps.version.outputs.version }}.vsix
 
       - name: Publish release
+        if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}

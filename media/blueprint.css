@@ -363,6 +363,8 @@ select { padding: 2px 4px; }
 .card .row.ret .nm { color: #f0a46a; }
 .card .row.ret .lb { font-size: 10px; color: #8d8d8d; }
 .card .row.rf { padding-left: 30px; }
+.card .row.ev .sg { color: #b9a3e0; }
+.card .row.rf .cm, .card .row.ev .cm { color: #6f8a6f; font-style: italic; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
 .card .mr.un { border-color: #4a4a4a; border-style: solid; color: #9a9a9a; }
 .card .mr.un b { color: #9fb6d6; }
 .card .mr.un:hover { background: #20262f; border-color: #4ea4ff; color: #fff; }

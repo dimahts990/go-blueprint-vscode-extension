@@ -52,6 +52,7 @@ type Node struct {
 	Fields     []Field  `json:"fields,omitempty"`
 	Stream     string   `json:"stream,omitempty"`  // rpc: unary | server | client | bidi
 	Returns    []Result `json:"returns,omitempty"` // func | method: result values
+	Values     []Field  `json:"values,omitempty"`  // type: enum constants of this type
 }
 
 // Result is one return value of a function, with the shape of its type.
@@ -59,7 +60,7 @@ type Result struct {
 	Name   string  `json:"name,omitempty"`
 	Type   string  `json:"type"`
 	Ref    string  `json:"ref,omitempty"`  // node id of the named type, when it is in the graph
-	Kind   string  `json:"kind,omitempty"` // struct | interface — what Fields lists
+	Kind   string  `json:"kind,omitempty"` // struct | interface | enum — what Fields lists
 	Fields []Field `json:"fields,omitempty"`
 }
 
@@ -133,7 +134,8 @@ type builder struct {
 	genDocs      map[*types.TypeName]string
 	genFieldDocs map[*types.TypeName]map[string]string
 	msgIDs       map[*types.TypeName]string
-	clientRPC    map[*types.Func]string // generated client method -> rpc node
+	clientRPC    map[*types.Func]string  // generated client method -> rpc node
+	constDocs    map[*types.Const]string // module constants -> their comment (enum values)
 }
 
 func main() {
@@ -191,6 +193,7 @@ func main() {
 		genFieldDocs: map[*types.TypeName]map[string]string{},
 		msgIDs:       map[*types.TypeName]string{},
 		clientRPC:    map[*types.Func]string{},
+		constDocs:    map[*types.Const]string{},
 	}
 
 	// With Tests=true the same package appears several times (p, p [p.test],
@@ -477,6 +480,10 @@ func (b *builder) declare(p *packages.Package) {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
+				if d.Tok == token.CONST {
+					b.declareConsts(p, d)
+					continue
+				}
 				if d.Tok != token.TYPE {
 					continue
 				}
@@ -554,6 +561,22 @@ func (b *builder) declare(p *packages.Package) {
 				}
 				b.funcIDs[fn] = n.ID
 				b.add(n)
+			}
+		}
+	}
+}
+
+// declareConsts remembers the comments of constants, shown as enum values.
+func (b *builder) declareConsts(p *packages.Package, d *ast.GenDecl) {
+	for _, spec := range d.Specs {
+		vs := spec.(*ast.ValueSpec)
+		doc := docLine(vs.Doc, vs.Comment)
+		if doc == "" {
+			continue
+		}
+		for _, name := range vs.Names {
+			if c, ok := p.TypesInfo.Defs[name].(*types.Const); ok {
+				b.constDocs[c] = doc
 			}
 		}
 	}
@@ -677,6 +700,13 @@ func (b *builder) typeRelations(p *packages.Package) {
 						}, map[types.Type]bool{})
 					}
 				default:
+					if named, ok := obj.Type().(*types.Named); ok {
+						if _, basic := u.(*types.Basic); basic {
+							var r Result
+							b.enumValues(&r, named, true)
+							n.Values = r.Fields
+						}
+					}
 					namedIn(u, func(tn *types.TypeName) {
 						if to := b.typeIDs[tn]; to != "" && to != id {
 							b.addEdge(id, to, "uses", "", nil)
@@ -775,6 +805,39 @@ func (b *builder) describeResult(r *Result, t types.Type, q types.Qualifier) {
 				Name: m.Name(), Type: sigString(m.Type().(*types.Signature), q), Exported: m.Exported(),
 			})
 		}
+	case *types.Basic:
+		if named != nil {
+			b.enumValues(r, named, local)
+		}
+	}
+}
+
+// enumValues lists the constants of a named basic type ("type Quality int" +
+// "const QualityOK Quality = iota …") in declaration order, with their values.
+func (b *builder) enumValues(r *Result, named *types.Named, local bool) {
+	obj := named.Origin().Obj()
+	scope := obj.Pkg().Scope()
+	var consts []*types.Const
+	for _, name := range scope.Names() {
+		c, ok := scope.Lookup(name).(*types.Const)
+		if !ok || !types.Identical(c.Type(), named) || (!local && !c.Exported()) {
+			continue
+		}
+		consts = append(consts, c)
+	}
+	if len(consts) == 0 {
+		return
+	}
+	sort.Slice(consts, func(i, j int) bool { return consts[i].Pos() < consts[j].Pos() })
+	r.Kind = "enum"
+	for _, c := range consts {
+		if len(r.Fields) == maxResultFields {
+			break
+		}
+		r.Fields = append(r.Fields, Field{
+			Name: c.Name(), Type: c.Val().ExactString(), Exported: c.Exported(), Doc: b.constDocs[c],
+			Line: b.fset.Position(c.Pos()).Line,
+		})
 	}
 }
 
