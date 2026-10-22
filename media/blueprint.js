@@ -173,6 +173,7 @@
       <div class="grp">
         <button id="fit" title="Fit (F)">fit</button>
         <button id="relayout" title="Auto-layout again">layout</button>
+        <button id="tidy" title="Распутать связи (C)">расчистить</button>
         <button id="refresh" title="Re-analyze module">⟳</button>
       </div>
     </div>
@@ -250,6 +251,7 @@
   $('#t-sidebar').addEventListener('click', () => { S.sidebar = !S.sidebar; syncToolbar(); applyView(); });
   $('#fit').addEventListener('click', () => fitView());
   $('#relayout').addEventListener('click', () => rebuild({ reset: true, fit: true }));
+  $('#tidy').addEventListener('click', () => rebuild({ reset: true, fit: true, clean: true }));
   $('#refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
   $('#back').addEventListener('click', () => goBack());
   $('#unfocus').addEventListener('click', () => setFocus(null));
@@ -288,7 +290,7 @@
   // toolbar hints: Russian description + schematic (media/tips.js)
   const tipEl = $('#tip');
   for (const chip of document.querySelectorAll('#kinds .chip')) chip.dataset.tip = chip.dataset.k;
-  for (const id of ['t-fields', 't-private', 't-docs', 't-compact', 't-group', 't-lenya', 't-sidebar', 'dir', 'depth', 'back', 'unfocus', 'fit', 'relayout', 'refresh', 'search']) {
+  for (const id of ['t-fields', 't-private', 't-docs', 't-compact', 't-group', 't-lenya', 't-sidebar', 'dir', 'depth', 'back', 'unfocus', 'fit', 'relayout', 'tidy', 'refresh', 'search']) {
     const el = $('#' + id);
     el.dataset.tip = id;
     el.removeAttribute('title');
@@ -1337,7 +1339,8 @@
 
   // ------------------------------------------------------------------ layout
 
-  async function layout(cards, edges) {
+  async function layout(cards, edges, { clean = false } = {}) {
+    if (clean) return layoutClean(cards, edges);
     const pairs = new Map();
     for (const e of edges) {
       const a = ownerOf(e.from), b = ownerOf(e.to);
@@ -1407,6 +1410,156 @@
       if (inner.has(p.id)) for (const c of inner.get(p.id).children) pos.set(c.id, { x: p.x + c.x, y: p.y + c.y });
       else pos.set('layer:' + p.id, { x: p.x, y: p.y });
     }
+  }
+
+  // "Расчистить": a slower, roomier layout meant for big tangled graphs.
+  // Wires are attached to the real rows (ELK ports with fixed positions), so
+  // crossing minimisation knows where each wire leaves and enters a card;
+  // then every gap between columns is widened by the number of wires that
+  // pass through it. The canvas grows as much as it takes.
+  async function layoutClean(cards, edges) {
+    const wiresL = []; // [ownerA, epA, ownerB, epB], deduped
+    const seen = new Set();
+    for (const e of edges) {
+      if (e.from === e.to) continue;
+      const fa = edgeFrom(e), a = ownerOf(fa), b = ownerOf(e.to);
+      if (!a || !b || a === b) continue;
+      const k = fa + '\u0000' + e.to;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      wiresL.push([a, fa, b, e.to]);
+    }
+    const n = cards.length;
+    const base = {
+      'elk.algorithm': 'layered',
+      'elk.direction': S.vertical ? 'DOWN' : 'RIGHT',
+      'elk.edgeRouting': 'POLYLINE',
+      'elk.separateConnectedComponents': 'true',
+      'elk.layered.cycleBreaking.strategy': 'GREEDY',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      // thoroughness costs time roughly linearly; keep big views within seconds
+      'elk.layered.crossingMinimization.greedySwitch.type': n > 900 ? 'OFF' : n > 400 ? 'ONE_SIDED' : 'TWO_SIDED',
+      'elk.layered.thoroughness': String(n > 400 ? 4 : n > 150 ? 10 : 24),
+      'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+      'elk.layered.mergeEdges': 'false',
+      'elk.spacing.edgeEdge': '14',
+      'elk.spacing.edgeNode': '28',
+      'elk.layered.spacing.edgeEdgeBetweenLayers': '14',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '36',
+    };
+    const portId = (owner, side, ep) => owner + '\u0001' + side + '\u0001' + ep;
+    // one ELK graph: nodes with fixed row ports (left-to-right) or plain nodes (top-down,
+    // where pins are spread along the edge anyway); returns rects relative to the graph
+    const run = async (list, ws, opts) => {
+      const ids = new Set(list.map((c) => c.id));
+      const ports = new Map(); // owner -> Map(portId -> port)
+      const own = ws.filter(([a, , b]) => ids.has(a) && ids.has(b));
+      const addPort = (owner, side, ep) => {
+        const id = portId(owner, side, ep);
+        if (!ports.has(owner)) ports.set(owner, new Map());
+        const pm = ports.get(owner);
+        if (!pm.has(id)) {
+          const m = meas.get(owner);
+          const y = m.rows.has(ep) ? m.rows.get(ep) : m.hdrY;
+          pm.set(id, { id, width: 1, height: 1, x: side === 'o' ? m.w - 1 : 0, y: y - 0.5,
+            layoutOptions: { 'elk.port.side': side === 'o' ? 'EAST' : 'WEST' } });
+        }
+        return id;
+      };
+      const elkEdges = own.map(([a, ea, b, eb], i) => S.vertical
+        ? { id: 'w' + i, sources: [a], targets: [b] }
+        : { id: 'w' + i, sources: [addPort(a, 'o', ea)], targets: [addPort(b, 'i', eb)] });
+      const res = await elk.layout({
+        id: 'root',
+        layoutOptions: { ...base, ...opts },
+        children: list.map((c) => {
+          const m = meas.get(c.id);
+          const nd = { id: c.id, width: m.w, height: m.h };
+          if (!S.vertical) {
+            nd.layoutOptions = { 'elk.portConstraints': 'FIXED_POS' };
+            nd.ports = [...(ports.get(c.id) || new Map()).values()];
+          }
+          return nd;
+        }),
+        edges: elkEdges,
+      });
+      const rects = new Map(res.children.map((c) => [c.id, { x: c.x, y: c.y, w: c.width, h: c.height }]));
+      const grow = spreadGaps(rects, own);
+      return { rects, width: res.width + (S.vertical ? 0 : grow), height: res.height + (S.vertical ? grow : 0) };
+    };
+    const roomy = (pad) => ({ 'elk.spacing.nodeNode': '56', 'elk.layered.spacing.nodeNodeBetweenLayers': '170',
+      'elk.spacing.componentComponent': '140', 'elk.aspectRatio': '1.5', 'elk.padding': pad });
+
+    if (!S.groupByPkg) {
+      const r = await run(cards, wiresL, roomy('[top=20,left=20,bottom=20,right=20]'));
+      for (const [id, q] of r.rects) pos.set(id, { x: q.x, y: q.y });
+      return;
+    }
+
+    // packages: clean each package on its own, then place the packages
+    const byPkg = new Map();
+    const layerCards = cards.filter((c) => c.kind === 'layer');
+    for (const c of cards) {
+      if (c.kind === 'layer') continue;
+      if (!byPkg.has(c.pkg)) byPkg.set(c.pkg, []);
+      byPkg.get(c.pkg).push(c);
+    }
+    const inner = new Map();
+    for (const [pkg, list] of byPkg) {
+      inner.set(pkg, await run(list, wiresL,
+        roomy(`[top=${FRAME_PAD.top},left=${FRAME_PAD.left},bottom=${FRAME_PAD.bottom},right=${FRAME_PAD.right}]`)));
+    }
+    const pkgOf = new Map(cards.map((c) => [c.id, c.pkg]));
+    const pkgPairs = new Map();
+    for (const [a, , b] of wiresL) {
+      const pa = pkgOf.get(a), pb = pkgOf.get(b);
+      if (pa && pb && pa !== pb) pkgPairs.set(pa + '\u0000' + pb, [pa, pb]);
+    }
+    const outer = await elk.layout({
+      id: 'root',
+      layoutOptions: { ...base, 'elk.spacing.nodeNode': '110', 'elk.layered.spacing.nodeNodeBetweenLayers': '260',
+        'elk.spacing.componentComponent': '160', 'elk.aspectRatio': '1.5', 'elk.padding': '[top=20,left=20,bottom=20,right=20]' },
+      children: [...inner.entries()].map(([pkg, r]) => ({ id: pkg, width: r.width, height: r.height }))
+        .concat(layerCards.map((c) => ({ id: c.pkg, width: meas.get(c.id).w, height: meas.get(c.id).h }))),
+      edges: [...pkgPairs.values()].map(([a, b], i) => ({ id: 'p' + i, sources: [a], targets: [b] })),
+    });
+    for (const p of outer.children) {
+      if (inner.has(p.id)) for (const [id, q] of inner.get(p.id).rects) pos.set(id, { x: p.x + q.x, y: p.y + q.y });
+      else pos.set('layer:' + p.id, { x: p.x, y: p.y });
+    }
+  }
+
+  // Group cards into columns along the layout axis (rows in top-down mode) and
+  // widen each gap so the wires crossing it don't merge into one bundle.
+  // Shifting everything past a gap by the same amount never creates overlaps.
+  // Mutates rects; returns how much the drawing grew along the axis.
+  function spreadGaps(rects, ws) {
+    const A = S.vertical ? 'y' : 'x', L = S.vertical ? 'h' : 'w';
+    const ids = [...rects.keys()].sort((a, b) => rects.get(a)[A] - rects.get(b)[A]);
+    const cols = [];
+    const colOf = new Map();
+    for (const id of ids) {
+      const r = rects.get(id), s = r[A], e = r[A] + r[L];
+      const last = cols[cols.length - 1];
+      if (last && s < last.end) last.end = Math.max(last.end, e);
+      else cols.push({ start: s, end: e });
+      colOf.set(id, cols.length - 1);
+    }
+    if (cols.length < 2) return 0;
+    const through = new Array(cols.length - 1).fill(0);
+    for (const [a, , b] of ws) {
+      if (!colOf.has(a) || !colOf.has(b)) continue;
+      const ca = colOf.get(a), cb = colOf.get(b);
+      for (let g = Math.min(ca, cb); g < Math.max(ca, cb); g++) through[g]++;
+    }
+    const shift = new Array(cols.length).fill(0);
+    for (let g = 0; g < through.length; g++) {
+      const gap = cols[g + 1].start - cols[g].end;
+      const need = Math.min(1400, 150 + through[g] * 9);
+      shift[g + 1] = shift[g] + Math.max(0, need - gap);
+    }
+    for (const [id, r] of rects) r[A] += shift[colOf.get(id)];
+    return shift[shift.length - 1];
   }
 
   // ------------------------------------------------------------------ frames
@@ -1664,7 +1817,8 @@
 
   // reset: the explicit "layout" action — the only thing that rearranges cards
   // the user has placed. Everything else keeps positions and only places new cards.
-  async function doRebuild({ reset = false, fit = false, anchor = null } = {}) {
+  // clean: reset with the roomy untangling layout ("расчистить")
+  async function doRebuild({ reset = false, fit = false, anchor = null, clean = false } = {}) {
     if (!G) return;
     syncToolbar();
     useCtx();
@@ -1682,9 +1836,9 @@
     if (reset || missing.length === visible.cards.length) {
       // a view seen for the first time (or an explicit reset): full auto-layout
       if (reset) for (const c of visible.cards) pos.delete(c.id);
-      setBusy(`Laying out ${visible.cards.length} nodes…`);
+      setBusy(clean ? `Расчищаю ${visible.cards.length} блоков…` : `Laying out ${visible.cards.length} nodes…`);
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
-      await layout(visible.cards, visible.edges);
+      await layout(visible.cards, visible.edges, { clean: clean && reset });
       setBusy(null);
       if (!anchorScreen) fit = true;
     } else if (missing.length > Math.max(12, visible.cards.length * 0.4)) {
@@ -2654,6 +2808,7 @@
     } else {
       items.push(['Fit view', () => fitView()]);
       items.push(['Auto-layout', () => rebuild({ reset: true, fit: true })]);
+      items.push(['Расчистить (распутать связи)', () => rebuild({ reset: true, fit: true, clean: true })]);
       if (S.open.length) items.push(['Close all code info', () => { S.open = []; for (const id of cardEls.keys()) renderDropdowns(id); saveState(); }]);
       if (S.focus) items.push(['Exit focus', () => setFocus(null)]);
     }
@@ -2750,6 +2905,7 @@
     if (ev.key === '/' || ((ev.metaKey || ev.ctrlKey) && ev.key === 'f')) { ev.preventDefault(); searchEl.focus(); searchEl.select(); }
     else if (ev.key === 'f' || ev.key === 'F') fitView();
     else if (ev.key === 'l' || ev.key === 'L' || ev.key === 'д' || ev.key === 'Д') $('#t-lenya').click();
+    else if ((ev.key === 'c' || ev.key === 'C' || ev.key === 'с' || ev.key === 'С') && !ev.metaKey && !ev.ctrlKey && !ev.altKey) $('#tidy').click();
     else if ((ev.key === 'e' || ev.key === 'E' || ev.key === 'у' || ev.key === 'У') && selection) {
       const c = byId.get(selection.card);
       const ep = selection.ep && byId.get(selection.ep);
