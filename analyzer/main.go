@@ -36,23 +36,24 @@ type Field struct {
 }
 
 type Node struct {
-	ID         string   `json:"id"`
-	Kind       string   `json:"kind"` // struct | interface | type | func | method | imethod | service | rpc | message
-	Name       string   `json:"name"`
-	Pkg        string   `json:"pkg"`
-	Parent     string   `json:"parent,omitempty"`
-	Sig        string   `json:"sig,omitempty"`
-	Underlying string   `json:"underlying,omitempty"`
-	File       string   `json:"file"`
-	Line       int      `json:"line"`
-	EndLine    int      `json:"endLine"`
-	Exported   bool     `json:"exported"`
-	PtrRecv    bool     `json:"ptrRecv,omitempty"`
-	Doc        string   `json:"doc,omitempty"`
-	Fields     []Field  `json:"fields,omitempty"`
-	Stream     string   `json:"stream,omitempty"`  // rpc: unary | server | client | bidi
-	Returns    []Result `json:"returns,omitempty"` // func | method: result values
-	Values     []Field  `json:"values,omitempty"`  // type: enum constants of this type
+	ID         string      `json:"id"`
+	Kind       string      `json:"kind"` // struct | interface | type | func | method | imethod | service | rpc | message
+	Name       string      `json:"name"`
+	Pkg        string      `json:"pkg"`
+	Parent     string      `json:"parent,omitempty"`
+	Sig        string      `json:"sig,omitempty"`
+	Underlying string      `json:"underlying,omitempty"`
+	File       string      `json:"file"`
+	Line       int         `json:"line"`
+	EndLine    int         `json:"endLine"`
+	Exported   bool        `json:"exported"`
+	PtrRecv    bool        `json:"ptrRecv,omitempty"`
+	Doc        string      `json:"doc,omitempty"`
+	Fields     []Field     `json:"fields,omitempty"`
+	Stream     string      `json:"stream,omitempty"`  // rpc: unary | server | client | bidi
+	Returns    []Result    `json:"returns,omitempty"` // func | method: result values
+	Values     []Field     `json:"values,omitempty"`  // type: enum constants of this type
+	Simulation *Simulation `json:"simulation,omitempty"`
 }
 
 // Result is one return value of a function, with the shape of its type.
@@ -263,6 +264,7 @@ func main() {
 	// Pass 3: calls and function references.
 	for _, p := range list {
 		b.calls(p)
+		b.simulations(p)
 	}
 
 	for _, e := range b.edges {

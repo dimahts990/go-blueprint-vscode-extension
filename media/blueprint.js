@@ -175,6 +175,7 @@
         <button id="relayout" title="Auto-layout again">layout</button>
         <button id="tidy" title="Распутать связи (C)">расчистить</button>
         <button id="refresh" title="Re-analyze module">⟳</button>
+        <button id="simulate" title="Статическая симуляция выбранной функции или метода">▷ симуляция</button>
       </div>
     </div>
     <div id="sidebar"></div>
@@ -188,6 +189,7 @@
       <canvas id="lod"></canvas>
       <div id="layers"></div>
       <div id="focusbar"></div>
+      <div id="simulation" hidden></div>
       <canvas id="minimap" width="440" height="300"></canvas>
       <div id="help">drag: move · wheel/pinch: zoom · background drag: pan · ⓘ: code info · dbl-click: open source · right-click: menu</div>
       <div id="busy"><div class="box">Loading…</div></div>
@@ -253,6 +255,10 @@
   $('#relayout').addEventListener('click', () => rebuild({ reset: true, fit: true }));
   $('#tidy').addEventListener('click', () => rebuild({ reset: true, fit: true, clean: true }));
   $('#refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
+  $('#simulate').addEventListener('click', () => {
+    const id = selection && (selection.ep || selection.card);
+    openSimulation(id);
+  });
   $('#back').addEventListener('click', () => goBack());
   $('#unfocus').addEventListener('click', () => setFocus(null));
   $('#dir').addEventListener('change', (e) => {
@@ -2693,6 +2699,119 @@
     vscode.postMessage({ type: 'open', file, line });
   }
 
+  // Static scenarios never execute the target program. The expression subset is
+  // deliberately narrow; anything outside it remains unknown.
+  const simPanel = $('#simulation');
+  for (const type of ['pointerdown', 'wheel', 'dblclick', 'contextmenu']) simPanel.addEventListener(type, (e) => e.stopPropagation());
+  function simValue(id, values, receiver) {
+    return window.BP_SIMULATOR.simulate(byId, id, values, receiver);
+  }
+
+  function simCalls(root) {
+    const rows = [], limit = 150;
+    let truncated = false;
+    function visit(id, depth, ancestors) {
+      const edges = (outIdx.get(id) || []).filter((e) => e.kind === 'calls');
+      edges.sort((a, b) => ((a.sites || [])[0]?.line || 0) - ((b.sites || [])[0]?.line || 0));
+      for (const e of edges) {
+        if (rows.length >= limit) { truncated = true; return; }
+        const recursive = ancestors.has(e.to);
+        rows.push({ from: id, to: e.to, depth, recursive, count: e.count, site: (e.sites || [])[0] });
+        if (!recursive && depth < 6) visit(e.to, depth + 1, new Set([...ancestors, e.to]));
+        else if (!recursive && (outIdx.get(e.to) || []).some((x) => x.kind === 'calls')) truncated = true;
+      }
+    }
+    visit(root, 0, new Set([root]));
+    return { rows, truncated };
+  }
+
+  function openSimulation(id) {
+    if (!G) return;
+    const nodes = G.nodes.filter((n) => n.kind === 'func' || n.kind === 'method').sort((a, b) => a.id.localeCompare(b.id));
+    if (!nodes.length) return;
+    if (!nodes.some((n) => n.id === id)) id = nodes[0].id;
+    simPanel.hidden = false;
+    simPanel.innerHTML = `<div class="sim-head"><strong>Симуляция · статический анализ</strong><button data-sim="close" title="Закрыть">✕</button></div>
+      <div class="sim-body"><label>Начальная функция или метод<select id="sim-target">${nodes.map((n) => `<option value="${esc(n.id)}"${n.id === id ? ' selected' : ''}>${esc(n.id)}</option>`).join('')}</select></label>
+      <div id="sim-signature" class="sim-hint"></div>
+      <div class="sim-hint">Код не запускается: результат и расчётный путь определяются статически по введённым данным. Неподдерживаемые операции и внешнее состояние остаются неизвестными.</div>
+      <label>Аргументы · JSON-объект<textarea id="sim-input" spellcheck="false"></textarea></label>
+      <label id="sim-receiver-wrap" hidden>Начальное состояние receiver · JSON-объект<textarea id="sim-receiver" spellcheck="false"></textarea><span class="sim-hint">Укажите все поля receiver.</span></label>
+      <div class="sim-actions"><button data-sim="run">Рассчитать</button><button data-sim="focus">Показать на графе</button></div>
+      <div id="sim-result" aria-live="polite"></div><div id="sim-state"></div><div id="sim-path"></div><h4>Кто может вызвать</h4><div id="sim-callers"></div><h4>Возможные вызовы</h4><div id="sim-calls"></div></div>`;
+    const target = $('#sim-target', simPanel), input = $('#sim-input', simPanel), receiverInput = $('#sim-receiver', simPanel);
+    function updateTarget() {
+      const n = byId.get(target.value), params = n.simulation?.params || [];
+      $('#sim-signature', simPanel).textContent = n.name + (n.sig || '');
+      const example = Object.create(null);
+      for (const p of params) example[p.name] = p.type === 'string' ? '' : p.type === 'bool' ? false : p.type === 'int' ? 0 : null;
+      input.value = JSON.stringify(example, null, 2);
+      const receiver = n.simulation?.receiver;
+      const initialReceiver = Object.create(null);
+      for (const field of receiver?.fields || []) initialReceiver[field.name] = field.type === 'string' ? '' : field.type === 'bool' ? false : field.type === 'int' ? 0 : null;
+      receiverInput.value = JSON.stringify(initialReceiver, null, 2);
+      $('#sim-receiver-wrap', simPanel).hidden = n.kind !== 'method';
+      $('#sim-result', simPanel).textContent = '';
+      $('#sim-state', simPanel).textContent = '';
+      $('#sim-path', simPanel).textContent = '';
+      const callers = (inIdx.get(n.id) || []).filter((e) => e.kind === 'calls');
+      $('#sim-callers', simPanel).innerHTML = callers.length ? callers.map((e) =>
+        `<button class="sim-call" data-sim-node="${esc(e.from)}">← ${esc(displayName(e.from))}${e.count > 1 ? ' ×' + e.count : ''}</button>`).join('') :
+        '<div class="sim-hint">Статические вызывающие функции не найдены.</div>';
+      const { rows, truncated } = simCalls(n.id);
+      $('#sim-calls', simPanel).innerHTML = rows.length ? rows.map((r) =>
+        `<button class="sim-call" data-sim-node="${esc(r.to)}" style="padding-left:${8 + r.depth * 14}px" title="${esc(r.site ? r.site.file + ':' + r.site.line : '')}">↳ ${esc(displayName(r.to))}${r.count > 1 ? ' ×' + r.count : ''}${r.recursive ? ' ↻' : ''}</button>`).join('') +
+        (truncated ? '<div class="sim-hint">Список ограничен по глубине или размеру.</div>' : '') : '<div class="sim-hint">Статические вызовы в графе не найдены.</div>';
+    }
+    target.addEventListener('change', updateTarget);
+    simPanel.onclick = async (e) => {
+      const action = e.target.closest('[data-sim]')?.dataset.sim;
+      if (action === 'close') simPanel.hidden = true;
+      if (action === 'run') {
+        const result = $('#sim-result', simPanel);
+        const state = $('#sim-state', simPanel), path = $('#sim-path', simPanel);
+        state.textContent = '';
+        path.textContent = '';
+        try {
+          const obj = JSON.parse(input.value), n = byId.get(target.value), params = n.simulation?.params || [];
+          if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('Введите JSON-объект с именами аргументов.');
+          if (Object.keys(obj).some((k) => !params.some((p) => p.name === k)) || params.some((p) => !Object.hasOwn(obj, p.name))) throw new Error('Укажите все аргументы функции без дополнительных полей.');
+          let receiver;
+          if (n.kind === 'method') {
+            receiver = JSON.parse(receiverInput.value);
+            if (!receiver || typeof receiver !== 'object' || Array.isArray(receiver)) throw new Error('Receiver должен быть JSON-объектом.');
+          }
+          const simulation = simValue(n.id, params.map((p) => obj[p.name]), receiver);
+          result.textContent = 'Результат: ' + JSON.stringify(simulation.values);
+          if (n.kind === 'method' && simulation.receiver !== undefined) {
+            const label = n.simulation?.receiver?.pointer ? 'Состояние receiver' : 'Состояние копии receiver';
+            state.textContent = label + ': ' + JSON.stringify(simulation.receiver, null, 2);
+          }
+          if (simulation.trace?.length) {
+            let depth = 0;
+            const calls = [];
+            for (const step of simulation.trace) {
+              if (step.event === 'return') depth = Math.max(0, depth - 1);
+              const pad = 8 + Math.min(depth, 12) * 14;
+              if (step.event === 'call') {
+                calls.push(`<button class="sim-call" data-sim-node="${esc(step.id)}" style="padding-left:${pad}px">↳ ${esc(displayName(step.id))}</button>`);
+                depth++;
+              } else if (['return', 'assign', 'branch', 'loop'].includes(step.event)) {
+                const icon = step.event === 'return' ? '↰ ' : '';
+                calls.push(`<div class="sim-step" style="padding-left:${pad}px">${icon}${esc(step.detail || '')}</div>`);
+              }
+            }
+            if (calls.length) path.innerHTML = '<h4>Расчётный путь</h4>' + calls.join('') + (simulation.traceTruncated ? '<div class="sim-hint">Путь ограничен по размеру.</div>' : '');
+          }
+        } catch (err) { result.textContent = err instanceof SyntaxError ? 'Некорректный JSON.' : err.message; }
+      }
+      if (action === 'focus') { S.dir = 'out'; S.edgeKinds.calls = true; syncToolbar(); await setFocus(target.value, { depth: 8 }); }
+      const node = e.target.closest('[data-sim-node]')?.dataset.simNode;
+      if (node) { const owner = ownerOf(node); if (visible.vis.has(owner)) { select(owner, node); centerOn(owner); } else await setFocus(node); }
+    };
+    updateTarget();
+  }
+
   // tooltips for wires and symbols
   let hoverW = null;
   function hover(ev) {
@@ -2780,6 +2899,7 @@
       items.push(null);
       items.push([S.open.includes(target) ? 'Hide code info' : 'Code info', () => toggleInfo(target)]);
       items.push(['Open source', () => { const n = byId.get(target); openSource(n.file, n.line); }]);
+      if (['func', 'method'].includes(byId.get(target).kind)) items.push(['▷ Симуляция', () => openSimulation(target)]);
       const cc = byId.get(cardId);
       const tn = byId.get(target);
       if (tn && tn.parent === cc.id && EXPLODABLE.has(cc.kind) && !explodedSet.has(cc.id)) {
@@ -2900,7 +3020,7 @@
   // ------------------------------------------------------------------ keyboard
 
   window.addEventListener('keydown', (ev) => {
-    if (ev.target.matches && ev.target.matches('input, select')) return;
+    if (ev.target.matches && ev.target.matches('input, select, textarea')) return;
     if (ev.target.closest && ev.target.closest('.dd')) return;
     if (ev.key === '/' || ((ev.metaKey || ev.ctrlKey) && ev.key === 'f')) { ev.preventDefault(); searchEl.focus(); searchEl.select(); }
     else if (ev.key === 'f' || ev.key === 'F') fitView();

@@ -376,3 +376,25 @@ select { padding: 2px 4px; }
 .card .row.method.out { padding-left: 16px; }
 .card .row.method.out .nm { color: #7d7d7d; }
 .card .row.method.out .sg { color: #9fb6d6; font-style: italic; }
+
+/* Static scenario explorer */
+#simulation { position: absolute; z-index: 16; right: 12px; top: 12px; width: min(430px, calc(100% - 24px));
+  max-height: calc(100% - 24px); display: flex; flex-direction: column; background: #1b1b1b; border: 1px solid #555;
+  border-radius: 7px; box-shadow: 0 8px 30px #0009; }
+#simulation[hidden] { display: none; }
+#simulation [hidden] { display: none; }
+#simulation .sim-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid #444; color: #ffd28a; }
+#simulation .sim-body { padding: 10px; overflow: auto; user-select: text; }
+#simulation label { display: block; color: #bbb; margin-bottom: 9px; }
+#simulation [hidden] { display: none; }
+#simulation select, #simulation textarea { display: block; width: 100%; margin-top: 4px; }
+#simulation textarea { min-height: 88px; resize: vertical; background: #262626; border: 1px solid #444; color: #eee;
+  border-radius: 4px; padding: 6px; font: 12px var(--mono); user-select: text; }
+#simulation .sim-hint { color: #aaa; font-size: 11px; margin: 7px 0; }
+#simulation .sim-actions { display: flex; gap: 6px; }
+#simulation h4 { margin: 12px 0 4px; color: #ddd; }
+#simulation #sim-result, #simulation #sim-state { margin-top: 8px; color: #ffd28a; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); }
+#simulation .sim-call { display: block; width: 100%; text-align: left; border: 0; border-radius: 2px; background: transparent;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--mono); }
+#simulation .sim-call:hover { background: #393027; }
+#simulation .sim-step { color: #aaa; font: 11px/1.5 var(--mono); overflow-wrap: anywhere; }
