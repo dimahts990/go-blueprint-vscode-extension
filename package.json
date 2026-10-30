@@ -2,7 +2,7 @@
   "name": "go-blueprint",
   "displayName": "Go Blueprint",
   "description": "Visualize a Go module as a blueprint-style canvas: types, funcs, methods and the wires between them (calls, implements, embeds, uses).",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "publisher": "dideploy",
   "license": "GPL-3.0-or-later",
   "repository": {
