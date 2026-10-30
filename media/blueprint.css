@@ -386,11 +386,18 @@ select { padding: 2px 4px; }
 #simulation .sim-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid #444; color: #ffd28a; }
 #simulation .sim-body { padding: 10px; overflow: auto; user-select: text; }
 #simulation label { display: block; color: #bbb; margin-bottom: 9px; }
-#simulation [hidden] { display: none; }
 #simulation select, #simulation textarea { display: block; width: 100%; margin-top: 4px; }
 #simulation textarea { min-height: 88px; resize: vertical; background: #262626; border: 1px solid #444; color: #eee;
   border-radius: 4px; padding: 6px; font: 12px var(--mono); user-select: text; }
 #simulation .sim-hint { color: #aaa; font-size: 11px; margin: 7px 0; }
+#simulation .sim-signature { color: #f5c687; font: 12px var(--mono); overflow-wrap: anywhere; margin: 7px 0; }
+#simulation .sim-input-section { margin: 10px 0; padding: 9px; background: #262626; border: 1px solid #444; border-radius: 5px; }
+#simulation .sim-input-section strong { color: #eee; }
+#simulation .sim-input-section label { margin: 8px 0 0; }
+#simulation .sim-field { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font: 11px var(--mono); overflow-wrap: anywhere; }
+#simulation .sim-field code { color: #ffd28a; }
+#simulation .sim-field span { color: #9ca9bc; }
+#simulation .sim-warning { padding: 7px 8px; border-left: 2px solid #d8a143; background: #302719; color: #efce93; }
 #simulation .sim-actions { display: flex; gap: 6px; }
 #simulation h4 { margin: 12px 0 4px; color: #ddd; }
 #simulation #sim-result, #simulation #sim-state { margin-top: 8px; color: #ffd28a; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); }

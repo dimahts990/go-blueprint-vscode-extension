@@ -518,6 +518,7 @@ class Blueprint {
 <script nonce="${nonce}" src="${media('elk.bundled.js')}"></script>
 <script nonce="${nonce}" src="${media('tips.js')}"></script>
 <script nonce="${nonce}" src="${media('simulation.js')}"></script>
+<script nonce="${nonce}" src="${media('simulation-input.js')}"></script>
 <script nonce="${nonce}" src="${media('blueprint.js')}"></script>
 </body>
 </html>`;

@@ -15,9 +15,20 @@ import (
 )
 
 type SimParam struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	ID   string `json:"id"`
+	Name  string    `json:"name"`
+	Type  string    `json:"type"`
+	ID    string    `json:"id"`
+	Shape *SimShape `json:"shape,omitempty"`
+}
+
+// SimShape describes inputs for the UI; it does not imply executable support.
+type SimShape struct {
+	Kind   string     `json:"kind"`
+	Type   string     `json:"type"`
+	Fields []SimParam `json:"fields,omitempty"`
+	Elem   *SimShape  `json:"elem,omitempty"`
+	Key    *SimShape  `json:"key,omitempty"`
+	Length int64      `json:"length,omitempty"`
 }
 
 type SimReceiver struct {
@@ -26,6 +37,60 @@ type SimReceiver struct {
 	ID      string     `json:"id"`
 	Pointer bool       `json:"pointer"`
 	Fields  []SimParam `json:"fields"`
+	Shape   *SimShape  `json:"shape,omitempty"`
+}
+
+func newShapeBudget() *int { n := 200; return &n }
+
+func inputShape(t types.Type, q types.Qualifier, seen map[types.Type]bool, depth int, budget *int) *SimShape {
+	if t == nil {
+		return &SimShape{Kind: "unknown", Type: "?"}
+	}
+	s := &SimShape{Type: types.TypeString(t, q), Kind: "unknown"}
+	if depth >= 6 || seen[t] || *budget <= 0 {
+		s.Kind = "recursive"
+		return s
+	}
+	*budget--
+	seen[t] = true
+	defer delete(seen, t)
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		switch {
+		case u.Info()&types.IsBoolean != 0:
+			s.Kind = "bool"
+		case u.Info()&types.IsString != 0:
+			s.Kind = "string"
+		case u.Info()&types.IsInteger != 0:
+			s.Kind = "int"
+		case u.Info()&types.IsFloat != 0:
+			s.Kind = "float"
+		}
+	case *types.Pointer:
+		s.Kind = "pointer"
+		s.Elem = inputShape(u.Elem(), q, seen, depth+1, budget)
+	case *types.Slice:
+		s.Kind = "slice"
+		s.Elem = inputShape(u.Elem(), q, seen, depth+1, budget)
+	case *types.Array:
+		s.Kind = "array"
+		s.Length = u.Len()
+		s.Elem = inputShape(u.Elem(), q, seen, depth+1, budget)
+	case *types.Map:
+		s.Kind = "map"
+		s.Key = inputShape(u.Key(), q, seen, depth+1, budget)
+		s.Elem = inputShape(u.Elem(), q, seen, depth+1, budget)
+	case *types.Struct:
+		s.Kind = "struct"
+		for i := 0; i < u.NumFields() && i < 50; i++ {
+			f := u.Field(i)
+			if f.Name() == "_" {
+				continue
+			}
+			s.Fields = append(s.Fields, SimParam{Name: f.Name(), Type: types.TypeString(f.Type(), q), Shape: inputShape(f.Type(), q, seen, depth+1, budget)})
+		}
+	}
+	return s
 }
 
 type SimExpr struct {
@@ -114,7 +179,7 @@ func (b *builder) simulations(p *packages.Package) {
 				}
 				id := simID(v)
 				vars[v] = id
-				s.Params = append(s.Params, SimParam{Name: name, Type: t, ID: id})
+				s.Params = append(s.Params, SimParam{Name: name, Type: t, ID: id, Shape: inputShape(v.Type(), qualifier(p.Types), map[types.Type]bool{}, 0, newShapeBudget())})
 			}
 			for i := 0; i < sig.Results().Len(); i++ {
 				if simType(sig.Results().At(i).Type()) == "" {
@@ -123,7 +188,7 @@ func (b *builder) simulations(p *packages.Package) {
 			}
 			var recv *types.Var
 			if recv = sig.Recv(); recv != nil {
-				r := &SimReceiver{Name: recv.Name(), Type: types.TypeString(recv.Type(), qualifier(p.Types)), ID: simID(recv), Fields: []SimParam{}}
+				r := &SimReceiver{Name: recv.Name(), Type: types.TypeString(recv.Type(), qualifier(p.Types)), ID: simID(recv), Fields: []SimParam{}, Shape: inputShape(recv.Type(), qualifier(p.Types), map[types.Type]bool{}, 0, newShapeBudget())}
 				if r.Name == "" || r.Name == "_" {
 					r.Name = "receiver"
 				}
@@ -142,7 +207,10 @@ func (b *builder) simulations(p *packages.Package) {
 						if ft == "" || field.Embedded() || field.Name() == "_" {
 							valid = false
 						}
-						r.Fields = append(r.Fields, SimParam{Name: field.Name(), Type: ft})
+						if ft == "" {
+							ft = types.TypeString(field.Type(), qualifier(p.Types))
+						}
+						r.Fields = append(r.Fields, SimParam{Name: field.Name(), Type: ft, Shape: inputShape(field.Type(), qualifier(p.Types), map[types.Type]bool{}, 0, newShapeBudget())})
 					}
 				}
 				s.Receiver = r

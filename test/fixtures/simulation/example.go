@@ -98,3 +98,25 @@ func (c *Counter) ConflictingReceiver() int {
 }
 
 func Empty() {}
+
+type Address struct {
+	City string
+	Zip  int
+}
+type Request struct {
+	Name    string
+	Address *Address
+	Tags    []string
+	Scores  map[string]int
+}
+type NestedReceiver struct{ Request Request }
+
+func Complex(req Request, count int, enabled bool) int { return count }
+func (n *NestedReceiver) Complex() int                 { return 1 }
+
+type Tree struct {
+	Value int
+	Left  *Tree
+}
+
+func RecursiveInput(tree *Tree, values [2]int) bool { return true }

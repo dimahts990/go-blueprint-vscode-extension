@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { simulate } = require('../media/simulation');
+const simInput = require('../media/simulation-input');
 
 const root = path.join(__dirname, 'fixtures', 'simulation');
 const binary = process.env.GO_BLUEPRINT_ANALYZER;
@@ -70,4 +71,34 @@ test('recursive functions run within a bound; unbounded loops stop', () => {
 test('input validation rejects missing fields and unmodelled integers', () => {
   assert.throws(() => run('Counter.Add', [2], { Value: 1 }), /все поля/);
   assert.throws(() => run('Swap', [2147483648, 1]), /требуется int/);
+});
+
+test('file scope limits the list of starting functions and methods', () => {
+  const state = { mode: 'file', fileScope: 'example.go', focus: { id: 'example.com/simulation.OtherFile' } };
+  const file = simInput.scopeFile(state);
+  const visible = simInput.candidates(graph.nodes, file);
+  assert.ok(visible.some((n) => n.name === 'Add'));
+  assert.ok(!visible.some((n) => n.name === 'OtherFile'));
+  assert.equal(simInput.scopeFile({ mode: 'full', focus: { id: 'file:other.go' } }), 'other.go');
+  assert.deepEqual(simInput.candidates(graph.nodes, 'other.go').map((n) => n.name), ['OtherFile']);
+  assert.ok(simInput.candidates(graph.nodes, null).some((n) => n.name === 'OtherFile'));
+  assert.deepEqual(simInput.candidates(graph.nodes, 'empty.go'), []);
+});
+
+test('examples reflect nested Go parameter and receiver types without enabling unsupported simulations', () => {
+  const complex = nodes.get('example.com/simulation.Complex').simulation;
+  assert.equal(complex.supported, false);
+  const example = JSON.parse(JSON.stringify(simInput.inputExample(complex.params)));
+  assert.deepEqual(example, {
+    req: { Name: 'пример', Address: { City: 'пример', Zip: 1 }, Tags: ['пример'], Scores: { 'ключ': 1 } },
+    count: 1, enabled: true,
+  });
+  const receiver = nodes.get('example.com/simulation.NestedReceiver.Complex').simulation;
+  assert.equal(receiver.supported, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(simInput.inputExample(receiver.receiver.fields))), { Request: example.req });
+  assert.deepEqual(JSON.parse(JSON.stringify(simInput.inputExample(nodes.get('example.com/simulation.Counter.Add').simulation.receiver.fields))),
+    { Value: 1, Active: true, Label: 'пример' });
+  const recursive = nodes.get('example.com/simulation.RecursiveInput').simulation;
+  assert.deepEqual(JSON.parse(JSON.stringify(simInput.inputExample(recursive.params))),
+    { tree: { Value: 1, Left: null }, values: [1, 1] });
 });

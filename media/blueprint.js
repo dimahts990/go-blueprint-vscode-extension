@@ -1881,6 +1881,7 @@
   }
 
   function setFocus(id, { push = true, depth } = {}) {
+    const previousSimFile = window.BP_SIM_INPUT.scopeFile(S);
     const cur = S.focus && S.focus.id;
     if (!cur && id) {
       // entering focus: a fresh trail, and remember where we were to come back
@@ -1891,6 +1892,7 @@
     if (push && cur && cur !== id) S.history.push(cur);
     if (S.history.length > 50) S.history.shift();
     S.focus = id ? { id } : null;
+    if (previousSimFile !== window.BP_SIM_INPUT.scopeFile(S)) $('#simulation').hidden = true;
     if (id && depth != null) S.focus.depth = depth;
     // focusing on a symbol inside a collapsed layer opens that layer
     const fc = id && byId.get(ownerOf(id));
@@ -1909,7 +1911,9 @@
       return setFocus('file:' + S.fileScope, { push: false, depth: 0 });
     }
     const pv = S.preFocusView;
+    const previousSimFile = window.BP_SIM_INPUT.scopeFile(S);
     S.focus = null;
+    if (previousSimFile !== window.BP_SIM_INPUT.scopeFile(S)) $('#simulation').hidden = true;
     S.history = [];
     S.extra = [];
     S.preFocusView = null;
@@ -2727,30 +2731,56 @@
 
   function openSimulation(id) {
     if (!G) return;
-    const nodes = G.nodes.filter((n) => n.kind === 'func' || n.kind === 'method').sort((a, b) => a.id.localeCompare(b.id));
-    if (!nodes.length) return;
+    const file = window.BP_SIM_INPUT.scopeFile(S);
+    const nodes = window.BP_SIM_INPUT.candidates(G.nodes, file);
+    if (!nodes.length) {
+      simPanel.hidden = false;
+      simPanel.innerHTML = `<div class="sim-head"><strong>Симуляция</strong><button data-sim="close">✕</button></div><div class="sim-body">${file ? 'В этом файле нет функций или методов для симуляции.' : 'В графе нет функций или методов для симуляции.'}</div>`;
+      simPanel.onclick = (e) => { if (e.target.closest('[data-sim="close"]')) simPanel.hidden = true; };
+      return;
+    }
     if (!nodes.some((n) => n.id === id)) id = nodes[0].id;
     simPanel.hidden = false;
     simPanel.innerHTML = `<div class="sim-head"><strong>Симуляция · статический анализ</strong><button data-sim="close" title="Закрыть">✕</button></div>
       <div class="sim-body"><label>Начальная функция или метод<select id="sim-target">${nodes.map((n) => `<option value="${esc(n.id)}"${n.id === id ? ' selected' : ''}>${esc(n.id)}</option>`).join('')}</select></label>
-      <div id="sim-signature" class="sim-hint"></div>
+      <div id="sim-scope" class="sim-hint">${file ? 'Функции файла: ' + esc(file) : 'Функции всего модуля'}</div><div id="sim-signature" class="sim-signature"></div>
       <div class="sim-hint">Код не запускается: результат и расчётный путь определяются статически по введённым данным. Неподдерживаемые операции и внешнее состояние остаются неизвестными.</div>
-      <label>Аргументы · JSON-объект<textarea id="sim-input" spellcheck="false"></textarea></label>
-      <label id="sim-receiver-wrap" hidden>Начальное состояние receiver · JSON-объект<textarea id="sim-receiver" spellcheck="false"></textarea><span class="sim-hint">Укажите все поля receiver.</span></label>
+      <div class="sim-input-section"><strong>Данные для вызова</strong><div class="sim-hint">Значения параметров в скобках функции. Ключи JSON — имена параметров. Измените предложенный пример.</div><div id="sim-params"></div><label id="sim-input-wrap">Параметры · JSON<textarea id="sim-input" spellcheck="false"></textarea></label><div id="sim-no-params" class="sim-hint" hidden>У этой функции нет параметров.</div></div>
+      <div id="sim-receiver-wrap" class="sim-input-section" hidden><strong>Объект метода</strong><div id="sim-receiver-help" class="sim-hint"></div><div id="sim-fields"></div><label>Начальное значение объекта · JSON<textarea id="sim-receiver" spellcheck="false"></textarea></label></div>
+      <div id="sim-support" class="sim-hint sim-warning" hidden></div>
       <div class="sim-actions"><button data-sim="run">Рассчитать</button><button data-sim="focus">Показать на графе</button></div>
       <div id="sim-result" aria-live="polite"></div><div id="sim-state"></div><div id="sim-path"></div><h4>Кто может вызвать</h4><div id="sim-callers"></div><h4>Возможные вызовы</h4><div id="sim-calls"></div></div>`;
     const target = $('#sim-target', simPanel), input = $('#sim-input', simPanel), receiverInput = $('#sim-receiver', simPanel);
     function updateTarget() {
       const n = byId.get(target.value), params = n.simulation?.params || [];
       $('#sim-signature', simPanel).textContent = n.name + (n.sig || '');
-      const example = Object.create(null);
-      for (const p of params) example[p.name] = p.type === 'string' ? '' : p.type === 'bool' ? false : p.type === 'int' ? 0 : null;
+      const example = window.BP_SIM_INPUT.inputExample(params);
       input.value = JSON.stringify(example, null, 2);
+      $('#sim-params', simPanel).innerHTML = params.map((p) => `<div class="sim-field"><code>${esc(p.name)}</code><span>${esc(p.type)}</span></div>`).join('');
+      $('#sim-input-wrap', simPanel).hidden = !params.length;
+      $('#sim-no-params', simPanel).hidden = !!params.length;
       const receiver = n.simulation?.receiver;
-      const initialReceiver = Object.create(null);
-      for (const field of receiver?.fields || []) initialReceiver[field.name] = field.type === 'string' ? '' : field.type === 'bool' ? false : field.type === 'int' ? 0 : null;
+      const receiverShape = receiver?.shape?.kind === 'pointer' ? receiver.shape.elem : receiver?.shape;
+      const initialReceiver = receiverShape?.kind === 'struct' || !receiver?.shape
+        ? window.BP_SIM_INPUT.inputExample(receiver?.fields || []) : window.BP_SIM_INPUT.example(receiver.shape);
       receiverInput.value = JSON.stringify(initialReceiver, null, 2);
       $('#sim-receiver-wrap', simPanel).hidden = n.kind !== 'method';
+      $('#sim-receiver-help', simPanel).textContent = receiver
+        ? `Начальное значение ${receiver.name} типа ${receiver.type}. Например, в ${receiver.name}.${n.name}(...) это объект до точки.`
+        : 'Это объект перед точкой в вызове метода. Его структура недоступна.';
+      $('#sim-fields', simPanel).innerHTML = (receiver?.fields || []).map((p) => `<div class="sim-field"><code>${esc(p.name)}</code><span>${esc(p.type || '?')}</span></div>`).join('');
+      const supported = !!n.simulation?.supported;
+      const support = $('#sim-support', simPanel);
+      support.hidden = supported;
+      const supportedTypes = new Set(['int', 'bool', 'string']);
+      const unsupported = [
+        ...params.filter((p) => !supportedTypes.has(p.type)).map((p) => `параметр ${p.name}: ${p.type}`),
+        ...(receiver?.fields || []).filter((p) => !supportedTypes.has(p.type)).map((p) => `поле объекта ${p.name}: ${p.type}`),
+        ...(n.returns || []).filter((p) => !supportedTypes.has(p.type)).map((p) => `результат: ${p.type}`),
+      ];
+      support.textContent = 'Структура показана для ориентира; null может означать неизвестный или рекурсивный тип. Расчёт этой сигнатуры пока не поддерживается' +
+        (unsupported.length ? ': ' + unsupported.join(', ') + '.' : '. Доступны только простые сигнатуры с типами int, bool и string.');
+      $('[data-sim="run"]', simPanel).disabled = !supported;
       $('#sim-result', simPanel).textContent = '';
       $('#sim-state', simPanel).textContent = '';
       $('#sim-path', simPanel).textContent = '';
@@ -3061,6 +3091,7 @@
 
   // File view: only the code of one file; optionally focus the symbol at a line.
   async function applyScope(file, line) {
+    if (window.BP_SIM_INPUT.scopeFile(S) !== file) $('#simulation').hidden = true;
     S.mode = 'file';
     S.fileScope = file;
     S.focus = null;
